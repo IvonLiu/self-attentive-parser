@@ -665,6 +665,11 @@ class NKChartParser(nn.Module):
         self.d_content = int(hparams.d_model * hparams.content_ratio) if self.partitioned else self.d_model
         self.d_positional = hparams.d_model - self.d_content if self.partitioned else None
 
+        print('d_content', self.d_content)
+        print('d_positional', self.d_positional)
+        print('d_model', hparams.d_model)
+        print('content_ratio', hparams.content_ratio)
+
         num_embeddings_map = {
             'tags': tag_vocab.size,
             'words': word_vocab.size,
