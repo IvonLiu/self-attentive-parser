@@ -50,6 +50,7 @@ def make_hparams():
 
         num_layers=8,
         d_model=1024,
+        content_ratio=0.5,
         num_heads=8,
         d_kv=64,
         d_ff=2048,
