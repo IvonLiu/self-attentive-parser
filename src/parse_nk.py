@@ -662,7 +662,7 @@ class NKChartParser(nn.Module):
 
         self.d_model = hparams.d_model
         self.partitioned = hparams.partitioned
-        self.d_content = int(hparams.d_model * hparams.content_ratio) if self.partitioned else self.d_model
+        self.d_content = int(hparams.d_model * hparams.content_ratio) // 2 * 2 if self.partitioned else self.d_model
         self.d_positional = hparams.d_model - self.d_content if self.partitioned else None
 
         print('d_content', self.d_content)
