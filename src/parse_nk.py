@@ -466,6 +466,12 @@ class MultiLevelEmbedding(nn.Module):
         self.position_table = nn.Parameter(torch_t.FloatTensor(max_len, self.d_positional))
         init.normal(self.position_table)
 
+    def random_slice_position_table(self, seq_len):
+        max_len = self.position_table.size(0)
+        max_shift = max_len - seq_len
+        shift = np.random.randint(max_shift+1)
+        return self.position_table[shift:shift+seq_len,:]
+
     def forward(self, xs, batch_idxs, extra_content_annotations=None):
         content_annotations = [
             emb_dropout(emb(x), batch_idxs)
@@ -478,7 +484,7 @@ class MultiLevelEmbedding(nn.Module):
             else:
                 content_annotations += extra_content_annotations
 
-        timing_signal = torch.cat([self.position_table[:seq_len,:] for seq_len in batch_idxs.seq_lens_np], dim=0)
+        timing_signal = torch.cat([self.random_slice_position_table(seq_len) for seq_len in batch_idxs.seq_lens_np], dim=0)
         timing_signal = self.timing_dropout(timing_signal, batch_idxs)
 
         # Combine the content and timing signals
