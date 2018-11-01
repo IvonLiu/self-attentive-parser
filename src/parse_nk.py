@@ -147,6 +147,7 @@ class LayerNormalization(nn.Module):
 class ScaledDotProductAttention(nn.Module):
     def __init__(self, d_model, attention_dropout=0.1):
         super(ScaledDotProductAttention, self).__init__()
+        # TODO(ivon): does prematurely chopping off d_model effect this?
         self.temper = d_model ** 0.5
         self.dropout = nn.Dropout(attention_dropout)
         self.softmax = nn.Softmax(dim=1)
@@ -200,13 +201,15 @@ class MultiHeadAttention(nn.Module):
             self.d_content = d_model - d_positional
             self.d_positional = d_positional
 
+            # We are basically chopping off the positional dimensions from the model
+            d_model = self.d_content
+
             self.w_qs1 = nn.Parameter(torch_t.FloatTensor(n_head, self.d_content, d_k // 2))
             self.w_ks1 = nn.Parameter(torch_t.FloatTensor(n_head, self.d_content, d_k // 2))
-            self.w_vs1 = nn.Parameter(torch_t.FloatTensor(n_head, self.d_content, d_v // 2))
+            self.w_vs1 = nn.Parameter(torch_t.FloatTensor(n_head, self.d_content, d_v))
 
             self.w_qs2 = nn.Parameter(torch_t.FloatTensor(n_head, self.d_positional, d_k // 2))
             self.w_ks2 = nn.Parameter(torch_t.FloatTensor(n_head, self.d_positional, d_k // 2))
-            self.w_vs2 = nn.Parameter(torch_t.FloatTensor(n_head, self.d_positional, d_v // 2))
 
             init.xavier_normal(self.w_qs1)
             init.xavier_normal(self.w_ks1)
@@ -214,7 +217,6 @@ class MultiHeadAttention(nn.Module):
 
             init.xavier_normal(self.w_qs2)
             init.xavier_normal(self.w_ks2)
-            init.xavier_normal(self.w_vs2)
         else:
             self.w_qs = nn.Parameter(torch_t.FloatTensor(n_head, d_model, d_k))
             self.w_ks = nn.Parameter(torch_t.FloatTensor(n_head, d_model, d_k))
@@ -232,17 +234,20 @@ class MultiHeadAttention(nn.Module):
             # in my experiments I have never observed this making a difference.
             self.proj = nn.Linear(n_head*d_v, d_model, bias=False)
         else:
-            self.proj1 = nn.Linear(n_head*(d_v//2), self.d_content, bias=False)
-            self.proj2 = nn.Linear(n_head*(d_v//2), self.d_positional, bias=False)
+            self.proj1 = nn.Linear(n_head*d_v, self.d_content, bias=False)
+            #self.proj2 = nn.Linear(n_head*(d_v//2), self.d_positional, bias=False)
 
         self.residual_dropout = FeatureDropout(residual_dropout)
 
-    def split_qkv_packed(self, inp, qk_inp=None):
+    def split_qkv_packed(self, inp, qk_inp=None, timing_signal=None):
         v_inp_repeated = inp.repeat(self.n_head, 1).view(self.n_head, -1, inp.size(-1)) # n_head x len_inp x d_model
         if qk_inp is None:
             qk_inp_repeated = v_inp_repeated
         else:
             qk_inp_repeated = qk_inp.repeat(self.n_head, 1).view(self.n_head, -1, qk_inp.size(-1))
+
+        if timing_signal is not None:
+            timing_signal_repeated = timing_signal.repeat(self.n_head, 1).view(self.n_head, -1, timing_signal.size(-1))
 
         if not self.partitioned:
             q_s = torch.bmm(qk_inp_repeated, self.w_qs) # n_head x len_inp x d_k
@@ -251,15 +256,15 @@ class MultiHeadAttention(nn.Module):
         else:
             q_s = torch.cat([
                 torch.bmm(qk_inp_repeated[:,:,:self.d_content], self.w_qs1),
-                torch.bmm(qk_inp_repeated[:,:,self.d_content:], self.w_qs2),
+                torch.bmm(timing_signal_repeated, self.w_qs2), # replace this with pos emb
                 ], -1)
             k_s = torch.cat([
                 torch.bmm(qk_inp_repeated[:,:,:self.d_content], self.w_ks1),
-                torch.bmm(qk_inp_repeated[:,:,self.d_content:], self.w_ks2),
+                torch.bmm(timing_signal_repeated, self.w_ks2), # replace this with pos emb
                 ], -1)
             v_s = torch.cat([
-                torch.bmm(v_inp_repeated[:,:,:self.d_content], self.w_vs1),
-                torch.bmm(v_inp_repeated[:,:,self.d_content:], self.w_vs2),
+                torch.bmm(v_inp_repeated[:,:,:self.d_content], self.w_vs1)
+                #torch.bmm(v_inp_repeated[:,:,self.d_content:], self.w_vs2),
                 ], -1)
         return q_s, k_s, v_s
 
@@ -306,24 +311,24 @@ class MultiHeadAttention(nn.Module):
             # Project back to residual size
             outputs = self.proj(outputs)
         else:
-            d_v1 = self.d_v // 2
-            outputs1 = outputs[:,:,:d_v1]
-            outputs2 = outputs[:,:,d_v1:]
-            outputs1 = torch.transpose(outputs1, 0, 1).contiguous().view(-1, n_head * d_v1)
-            outputs2 = torch.transpose(outputs2, 0, 1).contiguous().view(-1, n_head * d_v1)
+            # TODO(ivon): this is essentially the same thing as before, because d_v is already smaller
+            outputs1 = outputs
+            outputs1 = torch.transpose(outputs1, 0, 1).contiguous().view(-1, n_head * self.d_v)
             outputs = torch.cat([
-                self.proj1(outputs1),
-                self.proj2(outputs2),
+                self.proj1(outputs1)
                 ], -1)
 
         return outputs
 
     def forward(self, inp, batch_idxs, qk_inp=None):
+        if self.partitioned:
+            inp, timing_signal = inp[:,:self.d_content], inp[:,self.d_content:]
+
         residual = inp
 
         # While still using a packed representation, project to obtain the
         # query/key/value for each head
-        q_s, k_s, v_s = self.split_qkv_packed(inp, qk_inp=qk_inp)
+        q_s, k_s, v_s = self.split_qkv_packed(inp, qk_inp=qk_inp, timing_signal=timing_signal)
 
         # Switch to padded representation, perform attention, then switch back
         q_padded, k_padded, v_padded, attn_mask, output_mask = self.pad_and_rearrange(q_s, k_s, v_s, batch_idxs)
@@ -337,7 +342,15 @@ class MultiHeadAttention(nn.Module):
 
         outputs = self.residual_dropout(outputs, batch_idxs)
 
-        return self.layer_norm(outputs + residual), attns_padded
+        if self.partitioned:
+            outputs = torch.cat([
+                self.layer_norm(outputs + residual),
+                timing_signal
+                ], -1)
+        else:
+            outputs = self.layer_norm(outputs + residual)
+
+        return outputs, attns_padded
 
 # %%
 
@@ -379,10 +392,12 @@ class PartitionedPositionwiseFeedForward(nn.Module):
     def __init__(self, d_hid, d_ff, d_positional, relu_dropout=0.1, residual_dropout=0.1):
         super().__init__()
         self.d_content = d_hid - d_positional
+        d_hid = self.d_content
+
         self.w_1c = nn.Linear(self.d_content, d_ff//2)
-        self.w_1p = nn.Linear(d_positional, d_ff//2)
+        #self.w_1p = nn.Linear(d_positional, d_ff//2)
         self.w_2c = nn.Linear(d_ff//2, self.d_content)
-        self.w_2p = nn.Linear(d_ff//2, d_positional)
+        #self.w_2p = nn.Linear(d_ff//2, d_positional)
         self.layer_norm = LayerNormalization(d_hid)
         # The t2t code on github uses relu dropout, even though the transformer
         # paper describes residual dropout only. We implement relu dropout
@@ -392,22 +407,27 @@ class PartitionedPositionwiseFeedForward(nn.Module):
         self.relu = nn.ReLU()
 
     def forward(self, x, batch_idxs):
+        x, timing_signal = x[:,:self.d_content], x[:,self.d_content:]
+
         residual = x
         xc = x[:, :self.d_content]
-        xp = x[:, self.d_content:]
+        #xp = x[:, self.d_content:]
 
         outputc = self.w_1c(xc)
         outputc = self.relu_dropout(self.relu(outputc), batch_idxs)
         outputc = self.w_2c(outputc)
 
-        outputp = self.w_1p(xp)
-        outputp = self.relu_dropout(self.relu(outputp), batch_idxs)
-        outputp = self.w_2p(outputp)
+        #outputp = self.w_1p(xp)
+        #outputp = self.relu_dropout(self.relu(outputp), batch_idxs)
+        #outputp = self.w_2p(outputp)
 
-        output = torch.cat([outputc, outputp], -1)
+        output = torch.cat([outputc], -1)
 
         output = self.residual_dropout(output, batch_idxs)
-        return self.layer_norm(output + residual)
+        return torch.cat([
+            self.layer_norm(output + residual),
+            timing_signal
+            ], -1)
 
 # %%
 
@@ -605,6 +625,10 @@ class Encoder(nn.Module):
         d_model = embedding.d_embedding
 
         d_k = d_v = d_kv
+
+        # We are chopping off all the positional stuff
+        if d_positional is not None:
+            d_v = d_v // 2
 
         self.stacks = []
         for i in range(num_layers):
