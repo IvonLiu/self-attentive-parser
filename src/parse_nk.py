@@ -422,11 +422,13 @@ class MultiLevelEmbedding(nn.Module):
             timing_dropout=0.0,
             emb_dropouts_list=None,
             extra_content_dropout=None,
+            d_pos_lstm_input=1,
             **kwargs):
         super().__init__()
 
         self.d_embedding = d_embedding
         self.partitioned = d_positional is not None
+        self.d_pos_lstm_input = d_pos_lstm_input
 
         if self.partitioned:
             self.d_positional = d_positional
@@ -463,8 +465,10 @@ class MultiLevelEmbedding(nn.Module):
         self.timing_dropout = FeatureDropout(timing_dropout)
 
         # Learned embeddings
-        self.position_table = nn.Parameter(torch_t.FloatTensor(max_len, self.d_positional))
-        init.normal(self.position_table)
+        self.position_lstm = nn.LSTM(d_pos_lstm_input, self.d_positional)
+
+        # self.position_table = nn.Parameter(torch_t.FloatTensor(max_len, self.d_positional))
+        # init.normal(self.position_table)
 
     def forward(self, xs, batch_idxs, extra_content_annotations=None):
         content_annotations = [
@@ -478,8 +482,13 @@ class MultiLevelEmbedding(nn.Module):
             else:
                 content_annotations += extra_content_annotations
 
-        timing_signal = torch.cat([self.position_table[:seq_len,:] for seq_len in batch_idxs.seq_lens_np], dim=0)
-        timing_signal = self.timing_dropout(timing_signal, batch_idxs)
+        timing_signal = torch.cat([self.position_lstm(
+                Variable(torch.FloatTensor(np.zeros((seq_len, 1, self.d_pos_lstm_input))))
+            )[0].view(-1, self.d_positional) for seq_len in batch_idxs.seq_lens_np], dim=0)
+        # timing_signal = torch.cat([self.position_table[:seq_len,:] for seq_len in batch_idxs.seq_lens_np], dim=0)
+        # timing_signal = self.timing_dropout(timing_signal, batch_idxs)
+
+        # TODO(ivon): what exactly does dropout do? Do I need to keep it here?
 
         # Combine the content and timing signals
         if self.partitioned:
