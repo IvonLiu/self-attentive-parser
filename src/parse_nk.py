@@ -423,6 +423,8 @@ class MultiLevelEmbedding(nn.Module):
             emb_dropouts_list=None,
             extra_content_dropout=None,
             d_pos_lstm_input=1,
+            pos_lstm_train_input=False,
+            pos_lstm_random_input=False,
             **kwargs):
         super().__init__()
 
@@ -466,9 +468,21 @@ class MultiLevelEmbedding(nn.Module):
 
         # Learned embeddings
         self.position_lstm = nn.LSTM(d_pos_lstm_input, self.d_positional)
-
         # self.position_table = nn.Parameter(torch_t.FloatTensor(max_len, self.d_positional))
         # init.normal(self.position_table)
+        if pos_lstm_train_input:
+            assert not pos_lstm_random_input, "use_pos_lstm_train_input and use_pos_lstm_random_input are mutually exclusive"
+            self.trainable_lstm_input = nn.Parameter(torch_t.FloatTensor(self.d_pos_lstm_input))
+            init.normal(self.trainable_lstm_input)
+            # TODO(ivon): is repeating the parameter like this ok? Will this let the parameter be trainable?
+            self.pos_lstm_input = lambda seq_len: self.trainable_lstm_input.repeat(int(seq_len)).view(-1, 1, self.d_pos_lstm_input)
+        elif pos_lstm_random_input:
+            assert not pos_lstm_train_input, "use_pos_lstm_train_input and use_pos_lstm_random_input are mutually exclusive"
+            # TODO(ivon): do I need to use torch_t here?
+            self.pos_lstm_input = lambda seq_len: Variable(torch_t.randn(int(seq_len), 1, self.d_pos_lstm_input))
+        else:
+            # TODO(ivon): this won't try to train the tensor, right?
+            self.pos_lstm_input = lambda seq_len: Variable(torch_t.FloatTensor(np.zeros((seq_len, 1, self.d_pos_lstm_input))))
 
     def forward(self, xs, batch_idxs, extra_content_annotations=None):
         content_annotations = [
@@ -482,9 +496,10 @@ class MultiLevelEmbedding(nn.Module):
             else:
                 content_annotations += extra_content_annotations
 
-        timing_signal = torch.cat([self.position_lstm(
-                Variable(torch.FloatTensor(np.zeros((seq_len, 1, self.d_pos_lstm_input))))
-            )[0].view(-1, self.d_positional) for seq_len in batch_idxs.seq_lens_np], dim=0)
+        timing_signal = torch.cat([
+            self.position_lstm(self.pos_lstm_input(seq_len))[0]
+                .view(-1, self.d_positional)
+            for seq_len in batch_idxs.seq_lens_np], dim=0)
         # timing_signal = torch.cat([self.position_table[:seq_len,:] for seq_len in batch_idxs.seq_lens_np], dim=0)
         # timing_signal = self.timing_dropout(timing_signal, batch_idxs)
 
