@@ -75,6 +75,10 @@ def make_hparams():
         timing_dropout=0.0,
         char_lstm_input_dropout=0.2,
         elmo_dropout=0.5, # Note that this semi-stacks with morpho_emb_dropout!
+
+        d_pos_lstm_input=1,
+        pos_lstm_train_input=False,
+        pos_lstm_random_input=False,
         )
 
 def run_train(args, hparams):

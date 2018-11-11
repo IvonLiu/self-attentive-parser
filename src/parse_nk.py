@@ -474,14 +474,11 @@ class MultiLevelEmbedding(nn.Module):
             assert not pos_lstm_random_input, "use_pos_lstm_train_input and use_pos_lstm_random_input are mutually exclusive"
             self.trainable_lstm_input = nn.Parameter(torch_t.FloatTensor(self.d_pos_lstm_input))
             init.normal(self.trainable_lstm_input)
-            # TODO(ivon): is repeating the parameter like this ok? Will this let the parameter be trainable?
             self.pos_lstm_input = lambda seq_len: self.trainable_lstm_input.repeat(int(seq_len)).view(-1, 1, self.d_pos_lstm_input)
         elif pos_lstm_random_input:
             assert not pos_lstm_train_input, "use_pos_lstm_train_input and use_pos_lstm_random_input are mutually exclusive"
-            # TODO(ivon): do I need to use torch_t here?
             self.pos_lstm_input = lambda seq_len: Variable(torch_t.randn(int(seq_len), 1, self.d_pos_lstm_input))
         else:
-            # TODO(ivon): this won't try to train the tensor, right?
             self.pos_lstm_input = lambda seq_len: Variable(torch_t.FloatTensor(np.zeros((seq_len, 1, self.d_pos_lstm_input))))
 
     def forward(self, xs, batch_idxs, extra_content_annotations=None):
@@ -501,9 +498,7 @@ class MultiLevelEmbedding(nn.Module):
                 .view(-1, self.d_positional)
             for seq_len in batch_idxs.seq_lens_np], dim=0)
         # timing_signal = torch.cat([self.position_table[:seq_len,:] for seq_len in batch_idxs.seq_lens_np], dim=0)
-        # timing_signal = self.timing_dropout(timing_signal, batch_idxs)
-
-        # TODO(ivon): what exactly does dropout do? Do I need to keep it here?
+        timing_signal = self.timing_dropout(timing_signal, batch_idxs)
 
         # Combine the content and timing signals
         if self.partitioned:
@@ -689,10 +684,9 @@ class NKChartParser(nn.Module):
         self.d_content = int(hparams.d_model * hparams.content_ratio) // 2 * 2 if self.partitioned else self.d_model
         self.d_positional = hparams.d_model - self.d_content if self.partitioned else None
 
-        print('d_content', self.d_content)
-        print('d_positional', self.d_positional)
-        print('d_model', hparams.d_model)
-        print('content_ratio', hparams.content_ratio)
+        print('d_pos_lstm_input', hparams.d_pos_lstm_input)
+        print('pos_lstm_train_input', hparams.pos_lstm_train_input)
+        print('pos_lstm_random_input', hparams.pos_lstm_random_input)
 
         num_embeddings_map = {
             'tags': tag_vocab.size,
@@ -768,6 +762,9 @@ class NKChartParser(nn.Module):
             emb_dropouts_list=[emb_dropouts_map[emb_type] for emb_type in self.emb_types],
             extra_content_dropout=self.morpho_emb_dropout,
             max_len=hparams.sentence_max_len,
+            d_pos_lstm_input=hparams.d_pos_lstm_input,
+            pos_lstm_train_input=hparams.pos_lstm_train_input,
+            pos_lstm_random_input=hparams.pos_lstm_random_input,
         )
 
         self.encoder = Encoder(
