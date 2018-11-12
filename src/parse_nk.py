@@ -477,7 +477,7 @@ class MultiLevelEmbedding(nn.Module):
             self.pos_lstm_input = lambda seq_len: self.trainable_lstm_input.repeat(int(seq_len)).view(-1, 1, self.d_pos_lstm_input)
         elif pos_lstm_random_input:
             assert not pos_lstm_train_input, "use_pos_lstm_train_input and use_pos_lstm_random_input are mutually exclusive"
-            self.pos_lstm_input = lambda seq_len: Variable(torch_t.randn(int(seq_len), 1, self.d_pos_lstm_input))
+            self.pos_lstm_input = lambda seq_len: Variable(torch_t.FloatTensor(int(seq_len), 1, self.d_pos_lstm_input).normal_())
         else:
             self.pos_lstm_input = lambda seq_len: Variable(torch_t.FloatTensor(np.zeros((seq_len, 1, self.d_pos_lstm_input))))
 
