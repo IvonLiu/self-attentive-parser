@@ -425,6 +425,7 @@ class MultiLevelEmbedding(nn.Module):
             d_pos_lstm_input=1,
             pos_lstm_train_input=False,
             pos_lstm_random_input=False,
+            d_pos_lstm_hidden=512,
             **kwargs):
         super().__init__()
 
@@ -467,7 +468,8 @@ class MultiLevelEmbedding(nn.Module):
         self.timing_dropout = FeatureDropout(timing_dropout)
 
         # Learned embeddings
-        self.position_lstm = nn.LSTM(d_pos_lstm_input, self.d_positional)
+        self.position_lstm = nn.LSTM(d_pos_lstm_input, d_pos_lstm_hidden)
+        self.emb_proj = nn.Linear(d_pos_lstm_hidden, self.d_positional)
         # self.position_table = nn.Parameter(torch_t.FloatTensor(max_len, self.d_positional))
         # init.normal(self.position_table)
         if pos_lstm_train_input:
@@ -494,8 +496,10 @@ class MultiLevelEmbedding(nn.Module):
                 content_annotations += extra_content_annotations
 
         timing_signal = torch.cat([
-            self.position_lstm(self.pos_lstm_input(seq_len))[0]
-                .view(-1, self.d_positional)
+            self.emb_proj(
+                self.position_lstm(self.pos_lstm_input(seq_len))[0]
+                    .view(int(seq_len), -1)
+                )
             for seq_len in batch_idxs.seq_lens_np], dim=0)
         # timing_signal = torch.cat([self.position_table[:seq_len,:] for seq_len in batch_idxs.seq_lens_np], dim=0)
         timing_signal = self.timing_dropout(timing_signal, batch_idxs)
@@ -765,6 +769,7 @@ class NKChartParser(nn.Module):
             d_pos_lstm_input=hparams.d_pos_lstm_input,
             pos_lstm_train_input=hparams.pos_lstm_train_input,
             pos_lstm_random_input=hparams.pos_lstm_random_input,
+            d_pos_lstm_hidden=hparams.d_pos_lstm_hidden,
         )
 
         self.encoder = Encoder(
