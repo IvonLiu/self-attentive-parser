@@ -426,6 +426,8 @@ class MultiLevelEmbedding(nn.Module):
             pos_lstm_train_input=False,
             pos_lstm_random_input=False,
             d_pos_lstm_hidden=512,
+            pos_lstm_train_hidden=False,
+            pos_lstm_random_hidden=False,
             **kwargs):
         super().__init__()
 
@@ -483,6 +485,26 @@ class MultiLevelEmbedding(nn.Module):
         else:
             self.pos_lstm_input = lambda seq_len: Variable(torch_t.FloatTensor(np.zeros((seq_len, 1, self.d_pos_lstm_input))))
 
+        if pos_lstm_train_hidden:
+            assert not pos_lstm_random_hidden, "use_pos_lstm_train_hidden and use_pos_lstm_random_hidden are mutually exclusive"
+            self.hidden = (
+                nn.Parameter(torch_t.FloatTensor(1, 1, d_pos_lstm_hidden)),
+                nn.Parameter(torch_t.FloatTensor(1, 1, d_pos_lstm_hidden))
+                )
+            init.normal(self.hidden[0])
+            init.normal(self.hidden[1])
+        elif pos_lstm_random_hidden:
+            assert not pos_lstm_train_hidden, "use_pos_lstm_train_hidden and use_pos_lstm_random_hidden are mutually exclusive"
+            self.hidden = (
+                Variable(torch_t.FloatTensor(1, 1, d_pos_lstm_hidden).normal_()),
+                Variable(torch_t.FloatTensor(1, 1, d_pos_lstm_hidden).normal_())
+                )
+        else:
+            self.hidden = (
+                Variable(torch_t.FloatTensor(1, 1, d_pos_lstm_hidden).fill_(0)),
+                Variable(torch_t.FloatTensor(1, 1, d_pos_lstm_hidden).fill_(0))
+                )
+
     def forward(self, xs, batch_idxs, extra_content_annotations=None):
         content_annotations = [
             emb_dropout(emb(x), batch_idxs)
@@ -497,7 +519,7 @@ class MultiLevelEmbedding(nn.Module):
 
         timing_signal = torch.cat([
             self.emb_proj(
-                self.position_lstm(self.pos_lstm_input(seq_len))[0]
+                self.position_lstm(self.pos_lstm_input(seq_len), self.hidden)[0]
                     .view(int(seq_len), -1)
                 )
             for seq_len in batch_idxs.seq_lens_np], dim=0)
@@ -770,6 +792,8 @@ class NKChartParser(nn.Module):
             pos_lstm_train_input=hparams.pos_lstm_train_input,
             pos_lstm_random_input=hparams.pos_lstm_random_input,
             d_pos_lstm_hidden=hparams.d_pos_lstm_hidden,
+            pos_lstm_train_hidden=hparams.pos_lstm_train_hidden,
+            pos_lstm_random_hidden=hparams.pos_lstm_random_hidden,
         )
 
         self.encoder = Encoder(

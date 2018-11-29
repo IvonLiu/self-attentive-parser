@@ -80,6 +80,8 @@ def make_hparams():
         pos_lstm_train_input=False,
         pos_lstm_random_input=False,
         d_pos_lstm_hidden=512,
+        pos_lstm_train_hidden=False,
+        pos_lstm_random_hidden=False,
         )
 
 def run_train(args, hparams):
