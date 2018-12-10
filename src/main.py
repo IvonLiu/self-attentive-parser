@@ -35,6 +35,7 @@ def make_hparams():
     return nkutil.HParams(
         max_len_train=0, # no length limit
         max_len_dev=0, # no length limit
+        min_len_dev=0,
 
         sentence_max_len=300,
 
@@ -106,6 +107,8 @@ def run_train(args, hparams):
     dev_treebank = trees.load_trees(args.dev_path)
     if hparams.max_len_dev > 0:
         dev_treebank = [tree for tree in dev_treebank if len(list(tree.leaves())) <= hparams.max_len_dev]
+    if hparams.min_len_dev > 0:
+        dev_treebank = [tree for tree in dev_treebank if len(list(tree.leaves())) > hparams.min_len_dev]
     print("Loaded {:,} development examples.".format(len(dev_treebank)))
 
     print("Processing trees for training...")
